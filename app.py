@@ -4,16 +4,17 @@ import pandas as pd
 from datetime import datetime
 
 # 1. Sayfa Ayarları
-st.set_page_config(page_title="LRF Pro Analyzer", page_icon="🎣", layout="wide")
+st.set_page_config(page_title="LRF Master Pro v3", page_icon="🎣", layout="wide")
 
 st.markdown("""
     <style>
-    .metric-card { background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #007BFF; }
-    [data-testid="stMetricValue"] { font-size: 22px; }
+    .stMetric { background-color: #f8f9fa; padding: 10px; border-radius: 10px; border: 1px solid #dee2e6; }
+    [data-testid="stMetricValue"] { font-size: 20px !important; }
+    .status-box { padding: 15px; border-radius: 10px; margin-bottom: 10px; color: white; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎣 LRF Master Pro: Teknik Veri Paneli")
+st.title("🎣 LRF Master: Derinlik & Teknik Analiz")
 
 # 2. Mera Koordinatları
 MERALAR = {
@@ -29,76 +30,67 @@ MERALAR = {
     "Yeşilköy": {"lat": 40.9550, "lon": 28.8250}
 }
 
-# 3. Veri Çekme (Hava + Deniz + Astronomi)
-@st.cache_data(ttl=900)
-def get_extended_data(lat, lon):
+# 3. Veri Çekme Motoru
+@st.cache_data(ttl=600)
+def get_full_analysis(lat, lon):
     try:
-        # Hava ve Genel
         w_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,is_day,wind_speed_10m,wind_direction_10m,surface_pressure,relative_humidity_2m&daily=sunrise,sunset&timezone=auto"
-        # Denizcilik (Dalga)
         m_url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&current=wave_height,wave_direction"
-        
         w = requests.get(w_url).json()
         m = requests.get(m_url).json()
         return w, m
     except: return None, None
 
-secilen_mera = st.selectbox("📍 Analiz Edilecek Merayı Seçin:", list(MERALAR.keys()))
+secilen_mera = st.selectbox("📍 Mera Seçin:", list(MERALAR.keys()))
 lat, lon = MERALAR[secilen_mera]['lat'], MERALAR[secilen_mera]['lon']
-w, m = get_extended_data(lat, lon)
+w, m = get_full_analysis(lat, lon)
 
 if w and m:
-    curr_w = w['current']
-    curr_m = m['current']
+    curr_w, curr_m = w['current'], m['current']
     
-    # 4. Gelişmiş Skorlama (Solunar ve Deniz Şartları)
-    score = 55
-    if curr_w['wind_speed_10m'] < 12: score += 15
-    if curr_m['wave_height'] < 0.4: score += 15
-    if curr_w['is_day'] == 0: score += 10 # Gece avantajı
-    if 1010 < curr_w['surface_pressure'] < 1020: score += 10 # Basınç dengesi
-    
+    # 4. Derinlik Tahmin Algoritması
+    # Işık ve sıcaklığa göre balığın olduğu katman
+    if curr_w['is_day'] == 0:
+        derinlik_tahmini = "Yüzey ve Orta Su (0.5m - 2m)"
+        katman_tavsiyesi = "Balıklar beslenmek için yüzeye yakın. Glow silikonlarla yüzey taraması yap."
+    else:
+        derinlik_tahmini = "Dip ve Kaya Altı (3m - 6m)"
+        katman_tavsiyesi = "Işıktan kaçan balık dipte. Ağır jighead ile dipte zıplatma yap."
+
+    # Av Şansı Hesaplama
+    score = 50
+    if curr_w['wind_speed_10m'] < 10: score += 20
+    if curr_m['wave_height'] < 0.3: score += 15
+    if 1012 <= curr_w['surface_pressure'] <= 1018: score += 15
     score = min(100, max(0, score))
 
-    # 5. Kullanıcı Bilgi Paneli (Dashboard)
-    st.subheader(f"📊 {secilen_mera} Anlık Teknik Veriler")
-    
-    # Birinci Satır: Temel Göstergeler
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("🎯 AV ŞANSI", f"%{score}")
-    col2.metric("💨 RÜZGAR", f"{curr_w['wind_speed_10m']} km/s")
-    col3.metric("🌊 DALGA", f"{curr_m['wave_height']} m")
-    col4.metric("🌡️ SICAKLIK", f"{curr_w['temperature_2m']}°C")
+    # 5. Dashboard Tasarımı
+    st.markdown("### 📊 Anlık Teknik Veriler")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🎯 AV ŞANSI", f"%{score}")
+    c2.metric("💨 RÜZGAR", f"{curr_w['wind_speed_10m']} km/s")
+    c3.metric("🌊 DALGA", f"{curr_m['wave_height']} m")
+    c4.metric("🌡️ HAVA", f"{curr_w['temperature_2m']}°C")
 
-    # İkinci Satır: Detaylı Bilgiler
-    st.markdown("---")
-    d1, d2, d3, d4 = st.columns(4)
-    d1.write(f"🧭 **Rüzgar Yönü:** {curr_w['wind_direction_10m']}°")
-    d2.write(f"📉 **Basınç:** {curr_w['surface_pressure']} hPa")
-    d3.write(f"💧 **Nem:** %{curr_w['relative_humidity_2m']}")
-    d4.write(f"🌓 **Periyot:** {'GECE' if curr_w['is_day'] == 0 else 'GÜNDÜZ'}")
+    st.divider()
 
-    # 6. Harita ve Solunar Zamanları
-    st.markdown("---")
-    m_col, s_col = st.columns([1.5, 1])
-    
-    with m_col:
-        st.map(pd.DataFrame({'lat': [lat], 'lon': [lon]}), zoom=13)
+    # Alt Panel
+    col_left, col_right = st.columns([1, 1])
+
+    with col_left:
+        st.subheader("🔍 Derinlik & Katman Analizi")
+        st.warning(f"**Tahmini Derinlik:** {derinlik_tahmini}")
+        st.info(f"**Strateji:** {katman_tavsiyesi}")
         
-    with s_col:
-        st.success("☀️ **Solunar ve Günlük Döngü**")
-        st.write(f"🌅 **Gün Doğumu:** {w['daily']['sunrise'][0][-5:]}")
+        # Ek Bilgiler Tablosu
+        st.write("---")
+        st.write(f"📉 **Basınç:** {curr_w['surface_pressure']} hPa")
+        st.write(f"🧭 **Rüzgar Yönü:** {curr_w['wind_direction_10m']}°")
         st.write(f"🌇 **Gün Batımı:** {w['daily']['sunset'][0][-5:]}")
-        st.write(f"🌊 **Dalga Yönü:** {curr_m['wave_direction']}°")
-        
-        # Dinamik Tavsiye Kutusu
-        st.info("💡 **Günün Tavsiyesi**")
-        if curr_w['surface_pressure'] < 1005:
-            st.write("Düşük Basınç: Balık derine çekilmiş olabilir, dip taraması yap.")
-        elif curr_m['wave_height'] > 0.5:
-            st.write("Dalgalı Deniz: Aksiyonu yüksek, ses çıkaran sahteler seç.")
-        else:
-            st.write("Sakin Su: Doğal renkler ve yavaş aksiyon ile avlan.")
+
+    with col_right:
+        st.write("**📍 Mera Konumu**")
+        st.map(pd.DataFrame({'lat': [lat], 'lon': [lon]}), zoom=14)
 
 else:
-    st.error("Veri bağlantısı kurulamadı.")
+    st.error("Veriler alınamadı.")
