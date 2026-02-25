@@ -1,26 +1,20 @@
 import streamlit as st
 import requests
+import pandas as pd
 
-# 1. Sayfa Ayarları (Hata veren parametreler kaldırıldı)
-st.set_page_config(
-    page_title="LRF Master", 
-    page_icon="🎣", 
-    layout="wide", 
-    initial_sidebar_state="collapsed"
-)
+# 1. Sayfa Ayarları
+st.set_page_config(page_title="LRF Master Pro", page_icon="🎣", layout="wide")
 
-# 2. Telefon Ekranı İçin Görsel Düzenleme
 st.markdown("""
     <style>
-    [data-testid="stMetricValue"] { font-size: 28px; }
-    .stButton>button { width: 100%; border-radius: 20px; }
-    .main { background-color: #fafafa; }
+    [data-testid="stMetricValue"] { font-size: 26px; color: #1E88E5; }
+    .stSelectbox label { font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎣 LRF Master: İstanbul")
+st.title("🎣 LRF Master: İstanbul Pro")
 
-# 3. Mera ve Balık Verileri
+# 2. Mera Verileri
 MERALAR = {
     "Kadıköy (Moda)": {"lat": 40.9780, "lon": 29.0220, "tip": "Kayalık/Derin"},
     "Üsküdar Sahil": {"lat": 41.0540, "lon": 29.0550, "tip": "Akıntılı/Derin"},
@@ -40,43 +34,46 @@ BALIK_REHBERI = {
     "Eşkina": "Glow iri silikon. Dipte yavaş zıplatma.",
     "Mırmır": "Kum kurdu rengi. Dipte yavaş sürütme.",
     "Levrek": "Beyaz maket balık veya 7cm silikon.",
-    "İskorpit": "Kırmızı/Turuncu kokulu silikon. Yavaş aksiyon."
+    "İskorpit": "Kırmızı/Turuncu kokulu silikon."
 }
 
-# 4. Seçim Arayüzü
-secilen_mera = st.selectbox("📍 Mera Seçin:", list(MERALAR.keys()))
-hedef_balik = st.selectbox("🐟 Hedef Balık:", list(BALIK_REHBERI.keys()))
+# Arayüz Düzeni
+col_main, col_map = st.columns([1, 1.2])
 
-@st.cache_data(ttl=900)
-def get_weather(lat, lon):
-    try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,is_day,wind_speed_10m,surface_pressure&daily=sunrise,sunset&timezone=auto"
-        return requests.get(url).json()
-    except:
-        return None
+with col_main:
+    secilen_mera = st.selectbox("📍 Mera Seçin:", list(MERALAR.keys()))
+    hedef_balik = st.selectbox("🐟 Hedef Balık:", list(BALIK_REHBERI.keys()))
 
-# 5. Analiz ve Gösterim
-w = get_weather(MERALAR[secilen_mera]['lat'], MERALAR[secilen_mera]['lon'])
+    @st.cache_data(ttl=600)
+    def get_weather(lat, lon):
+        try:
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,is_day,wind_speed_10m,surface_pressure&daily=sunrise,sunset&timezone=auto"
+            return requests.get(url).json()
+        except: return None
 
-if w:
-    c = w['current']
-    score = 70
-    if c['wind_speed_10m'] > 12: score -= 35
-    if c['is_day'] == 0: score += 20
-    score = min(100, max(0, score))
+    w = get_weather(MERALAR[secilen_mera]['lat'], MERALAR[secilen_mera]['lon'])
 
-    col1, col2 = st.columns(2)
-    col1.metric("AV ŞANSI", f"%{score}")
-    col2.metric("RÜZGAR", f"{c['wind_speed_10m']} km/s")
+    if w:
+        c = w['current']
+        # Olasılık Algoritması (Rüzgar ve Basınç Etkisi)
+        score = 65
+        if c['wind_speed_10m'] < 10: score += 15
+        elif c['wind_speed_10m'] > 18: score -= 40
+        
+        if c['is_day'] == 0: score += 15 # Gece LRF bonusu
+        
+        score = min(100, max(0, score))
 
-    if score > 70:
-        st.success("🎯 Şartlar harika, rastgele!")
-    elif score > 45:
-        st.warning("⚖️ Biraz çaba gerekebilir.")
-    else:
-        st.error("🏠 Hava şu an LRF'yi zorluyor.")
+        # Metrikler
+        m1, m2 = st.columns(2)
+        m1.metric("AV ŞANSI", f"%{score}")
+        m2.metric("RÜZGAR", f"{c['wind_speed_10m']} km/s")
 
-    st.info(f"💡 **Taktik:** {BALIK_REHBERI[hedef_balik]}")
-    st.write(f"🌅 Gün Doğumu: {w['daily']['sunrise'][0][-5:]} | 🌇 Gün Batımı: {w['daily']['sunset'][0][-5:]}")
-else:
-    st.error("Hava durumu verisi şu an alınamıyor.")
+        st.info(f"💡 **Taktik:** {BALIK_REHBERI[hedef_balik]}")
+        st.write(f"🌅 Gün Doğumu: {w['daily']['sunrise'][0][-5:]} | 🌇 Gün Batımı: {w['daily']['sunset'][0][-5:]}")
+
+# Harita Bölümü
+with col_map:
+    st.write(f"🗺️ **{secilen_mera} Konumu**")
+    map_data = pd.DataFrame({'lat': [MERALAR[secilen_mera]['lat']], 'lon': [MERALAR[secilen_mera]['lon']]})
+    st.map(map_data, zoom=13)
