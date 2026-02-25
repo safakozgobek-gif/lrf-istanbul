@@ -1,115 +1,116 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
-# 1. Sayfa Tasarımı ve Profesyonel Tema
-st.set_page_config(page_title="LRF Master Pro Dashboard", page_icon="🎣", layout="wide")
+# 1. Dashboard Tasarımı
+st.set_page_config(page_title="LRF Pro Terminal", page_icon="🎣", layout="wide")
 
 st.markdown("""
     <style>
-    .main { background-color: #0e1117; }
-    .metric-card {
-        background-color: #161b22;
-        padding: 20px;
-        border-radius: 15px;
-        border: 1px solid #30363d;
+    .metric-container {
+        background-color: #1a1c23;
+        padding: 15px;
+        border-radius: 12px;
+        border: 1px solid #2d2f39;
         text-align: center;
-        margin-bottom: 10px;
     }
-    .metric-label { color: #8b949e; font-size: 14px; font-weight: bold; margin-bottom: 5px; }
-    .metric-value { color: #58a6ff; font-size: 24px; font-weight: bold; }
-    .status-active { color: #238636; font-size: 12px; }
+    .metric-title { color: #8a8d97; font-size: 12px; font-weight: bold; }
+    .metric-value { color: #ffffff; font-size: 20px; font-weight: bold; margin: 5px 0; }
+    .metric-desc { color: #00d4ff; font-size: 11px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Mera Koordinatları
+st.title("🎣 LRF Master: Profesyonel Analiz")
+
 MERALAR = {
     "Kadıköy (Moda)": {"lat": 40.9780, "lon": 29.0220},
     "Üsküdar Sahil": {"lat": 41.0540, "lon": 29.0550},
     "Caddebostan": {"lat": 40.9620, "lon": 29.0650},
     "Dragos": {"lat": 40.8985, "lon": 29.1620},
-    "Maltepe Dolgu": {"lat": 40.9165, "lon": 29.1315},
-    "Kartal Sahil": {"lat": 40.8870, "lon": 29.1865},
-    "Pendik Marina": {"lat": 40.8755, "lon": 29.2315},
+    "Maltepe": {"lat": 40.9165, "lon": 29.1315},
+    "Kartal": {"lat": 40.8870, "lon": 29.1865},
     "Sarayburnu": {"lat": 41.0150, "lon": 28.9850},
     "Tarabya": {"lat": 41.1350, "lon": 29.0580},
     "Yeşilköy": {"lat": 40.9550, "lon": 28.8250}
 }
 
-st.title("🎣 LRF Master: Profesyonel Av Dashboard")
-
-# Yan Menü / Üst Seçim
-secilen_mera = st.selectbox("📍 Analiz Edilecek Bölgeyi Seçin", list(MERALAR.keys()))
+secilen_mera = st.selectbox("📍 Mera Seçin:", list(MERALAR.keys()))
 lat, lon = MERALAR[secilen_mera]['lat'], MERALAR[secilen_mera]['lon']
 
-@st.cache_data(ttl=600)
-def fetch_pro_data(lat, lon):
-    try:
-        w_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m&daily=sunrise,sunset,uv_index_max&timezone=auto"
-        m_url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&current=wave_height,wave_direction,wave_period"
-        return requests.get(w_url).json(), requests.get(m_url).json()
-    except: return None, None
+@st.cache_data(ttl=900)
+def get_pro_weather(lat, lon):
+    # Hem anlık hem 24 saatlik tahmin verilerini çekiyoruz
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,is_day,surface_pressure,wind_speed_10m&hourly=temperature_2m,surface_pressure,wind_speed_10m&daily=sunrise,sunset&timezone=auto&forecast_days=1"
+    m_url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&current=wave_height&hourly=wave_height"
+    return requests.get(url).json(), requests.get(m_url).json()
 
-w, m = fetch_pro_data(lat, lon)
+w, m = get_pro_weather(lat, lon)
 
 if w and "current" in w:
-    cw, dw, cm = w["current"], w["daily"], m.get("current", {})
-
-    # Profesyonel Skorlama (Örneklerdeki gibi dengeli)
-    score = 50
-    if cw['wind_speed_10m'] < 12: score += 20
-    if cm.get('wave_height', 0) < 0.4: score += 15
-    if 1010 < cw['surface_pressure'] < 1020: score += 10
-    score = min(94, score) # %100 gerçekçi değil, tavan çektik
-
-    # --- ÜST PANEL: ÖZET METRİKLER ---
-    col1, col2, col3, col4 = st.columns(4)
+    cw = w["current"]
+    hourly = w["hourly"]
     
-    metrics = [
-        ("🎯 AKTİVİTE", f"%{score}", "Yüksek" if score > 70 else "Orta"),
-        ("🌡️ SICAKLIK", f"{cw['temperature_2m']}°C", f"His: {cw['apparent_temperature']}°C"),
-        ("💨 RÜZGAR", f"{cw['wind_speed_10m']} km/s", f"Yön: {cw['wind_direction_10m']}°"),
-        ("🌊 DALGA", f"{cm.get('wave_height', '0.2')} m", f"Periyot: {cm.get('wave_period', '-')}s")
+    # --- PROFESYONEL PUANLAMA ALGORİTMASI ---
+    def calculate_score(wind, wave, press, is_day):
+        score = 50
+        if wind < 10: score += 15
+        elif wind > 18: score -= 30
+        if wave < 0.3: score += 10
+        elif wave > 0.6: score -= 20
+        # Basınç dengesi (En kritik yer: 1013 hPa idealdir)
+        if 1011 < press < 1015: score += 15
+        if is_day == 0: score += 10
+        return min(95, max(5, score))
+
+    anlik_skor = calculate_score(cw['wind_speed_10m'], m['current']['wave_height'], cw['surface_pressure'], cw['is_day'])
+
+    # --- ÜST PANEL (WIDGETLAR) ---
+    st.markdown("### 📊 Teknik Özet")
+    cols = st.columns(4)
+    data = [
+        ("AKTİVİTE", f"%{anlik_skor}", "Stabil" if 1010 < cw['surface_pressure'] < 1015 else "Değişken"),
+        ("RÜZGAR", f"{cw['wind_speed_10m']} km/s", f"Nem: %{cw['relative_humidity_2m']}"),
+        ("BASINÇ", f"{cw['surface_pressure']} hPa", "İdeal" if 1012 < cw['surface_pressure'] < 1016 else "Riskli"),
+        ("DALGA", f"{m['current']['wave_height']} m", "LRF Uygun")
     ]
-
-    for col, (label, value, sub) in zip([col1, col2, col3, col4], metrics):
+    
+    for i, col in enumerate(cols):
         with col:
-            st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-label">{label}</div>
-                    <div class="metric-value">{value}</div>
-                    <div class="status-active">{sub}</div>
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div class="metric-container">
+                <div class="metric-title">{data[i][0]}</div>
+                <div class="metric-value">{data[i][1]}</div>
+                <div class="metric-desc">{data[i][2]}</div>
+            </div>""", unsafe_allow_html=True)
 
+    # --- 24 SAATLİK TAHMİN GRAFİĞİ ---
     st.markdown("---")
+    st.subheader("⏰ 24 Saatlik Av Tahmini")
+    
+    # Saatlik verileri işle
+    forecast_data = []
+    current_hour = datetime.now().hour
+    for i in range(current_hour, current_hour + 24):
+        idx = i % 24
+        h_wind = hourly['wind_speed_10m'][idx]
+        h_press = hourly['surface_pressure'][idx]
+        # Basit bir gece/gündüz tahmini (18-06 arası gece)
+        h_is_day = 1 if 6 < idx < 19 else 0
+        h_score = calculate_score(h_wind, 0.2, h_press, h_is_day)
+        forecast_data.append({"Saat": f"{idx}:00", "Av Şansı": h_score})
+    
+    df_forecast = pd.DataFrame(forecast_data)
+    st.line_chart(df_forecast.set_index("Saat"), height=250)
 
-    # --- ORTA PANEL: HARİTA VE SOLUNAR ---
-    c_left, c_right = st.columns([1.5, 1])
-
-    with c_left:
-        st.markdown("### 🗺️ Mera Konumu")
+    # --- HARİTA VE DETAY ---
+    st.markdown("---")
+    l_col, r_col = st.columns([1.5, 1])
+    with l_col:
         st.map(pd.DataFrame({'lat': [lat], 'lon': [lon]}), zoom=14)
-
-    with c_right:
-        st.markdown("### 🌕 Solunar & Çizelge")
-        st.info(f"📏 **Tahmini Derinlik:** {'0.5m - 2m (Yüzey)' if cw['is_day'] == 0 else '3m - 6m (Dip)'}")
-        st.write(f"📉 **Basınç:** {cw['surface_pressure']} hPa")
-        st.write(f"💧 **Nem:** %{cw['relative_humidity_2m']}")
-        st.write(f"🌅 **Gün Doğumu:** {dw['sunrise'][0][-5:]}")
-        st.write(f"🌇 **Gün Batımı:** {dw['sunset'][0][-5:]}")
-        st.write(f"☀️ **UV İndeksi:** {dw['uv_index_max'][0]}")
-        
-        # Dinamik Öneri
-        if cw['surface_pressure'] > 1018:
-            st.success("✅ Yüksek Basınç: Balık iştahlı olabilir, hareketli sahteler dene.")
-        else:
-            st.warning("⚠️ Basınç Değişimi: Balık nazlı olabilir, kokulu silikonlara geç.")
-
-    # --- ALT PANEL: EK BİLGİLER ---
-    st.markdown("---")
-    st.caption("Veriler Open-Meteo Marine ve Astronomy servisleri tarafından anlık sağlanmaktadır.")
+    with r_col:
+        st.info(f"🌔 **Derinlik:** {'Yüzey (Işık/Gece)' if cw['is_day'] == 0 else 'Dip (Baskı/Gündüz)'}")
+        st.write(f"🌅 Gün Doğumu: {w['daily']['sunrise'][0][-5:]}")
+        st.write(f"🌇 Gün Batımı: {w['daily']['sunset'][0][-5:]}")
 
 else:
-    st.error("Veri alınamadı. Lütfen internet bağlantınızı veya API durumunu kontrol edin.")
+    st.error("Veri merkeziyle bağlantı kesildi.")
