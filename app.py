@@ -1,27 +1,23 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# 1. Dashboard Tasarımı
-st.set_page_config(page_title="LRF Pro Terminal", page_icon="🎣", layout="wide")
+# 1. Stil ve Dashboard Ayarları
+st.set_page_config(page_title="LRF Master: Target Edition", page_icon="🎣", layout="wide")
 
 st.markdown("""
     <style>
-    .metric-container {
-        background-color: #1a1c23;
-        padding: 15px;
-        border-radius: 12px;
-        border: 1px solid #2d2f39;
-        text-align: center;
-    }
-    .metric-title { color: #8a8d97; font-size: 12px; font-weight: bold; }
-    .metric-value { color: #ffffff; font-size: 20px; font-weight: bold; margin: 5px 0; }
-    .metric-desc { color: #00d4ff; font-size: 11px; }
+    .metric-card { background-color: #161b22; padding: 12px; border-radius: 10px; border: 1px solid #30363d; text-align: center; }
+    .metric-label { color: #8b949e; font-size: 12px; font-weight: bold; }
+    .metric-value { color: #58a6ff; font-size: 18px; font-weight: bold; }
+    .target-card { background-color: #0d1117; padding: 15px; border-radius: 10px; border: 1px solid #238636; text-align: center; margin-bottom: 10px; }
+    .target-name { color: #ffffff; font-weight: bold; font-size: 16px; }
+    .target-score { color: #238636; font-size: 20px; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎣 LRF Master: Profesyonel Analiz")
+st.title("🎣 LRF Master: Hedef Balık Analizi")
 
 MERALAR = {
     "Kadıköy (Moda)": {"lat": 40.9780, "lon": 29.0220},
@@ -39,78 +35,82 @@ secilen_mera = st.selectbox("📍 Mera Seçin:", list(MERALAR.keys()))
 lat, lon = MERALAR[secilen_mera]['lat'], MERALAR[secilen_mera]['lon']
 
 @st.cache_data(ttl=900)
-def get_pro_weather(lat, lon):
-    # Hem anlık hem 24 saatlik tahmin verilerini çekiyoruz
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,is_day,surface_pressure,wind_speed_10m&hourly=temperature_2m,surface_pressure,wind_speed_10m&daily=sunrise,sunset&timezone=auto&forecast_days=1"
-    m_url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&current=wave_height&hourly=wave_height"
+def get_fishing_data(lat, lon):
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,is_day,surface_pressure,wind_speed_10m&hourly=surface_pressure&daily=sunrise,sunset&timezone=Europe%2FIstanbul&forecast_days=1"
+    m_url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&current=wave_height&timezone=Europe%2FIstanbul"
     return requests.get(url).json(), requests.get(m_url).json()
 
-w, m = get_pro_weather(lat, lon)
+w, m = get_fishing_data(lat, lon)
 
 if w and "current" in w:
-    cw = w["current"]
-    hourly = w["hourly"]
+    cw, mw = w["current"], m["current"]
     
-    # --- PROFESYONEL PUANLAMA ALGORİTMASI ---
-    def calculate_score(wind, wave, press, is_day):
+    # --- BASINÇ TRENDİ ---
+    current_hour = datetime.now().hour
+    prev_press = w['hourly']['surface_pressure'][max(0, current_hour-3)]
+    press_diff = cw['surface_pressure'] - prev_press
+    
+    # --- BALIK BAZLI PUANLAMA MOTORU ---
+    def calculate_fish_score(fish_type, wind, wave, press, is_day, p_diff):
         score = 50
-        if wind < 10: score += 15
-        elif wind > 18: score -= 30
-        if wave < 0.3: score += 10
-        elif wave > 0.6: score -= 20
-        # Basınç dengesi (En kritik yer: 1013 hPa idealdir)
-        if 1011 < press < 1015: score += 15
-        if is_day == 0: score += 10
+        if fish_type == "İstavrit":
+            if wind < 15: score += 20
+            if is_day == 0: score += 15
+        elif fish_type == "Eşkina":
+            if wind < 8: score += 25
+            if wave < 0.2: score += 20
+            if is_day == 0: score += 30
+            else: score -= 40 # Gündüz Eşkina zordur
+        elif fish_type == "Mırmır":
+            if 1012 < press < 1016: score += 20
+            if wave < 0.4: score += 15
+            if p_diff > 0: score += 10
+        elif fish_type == "Levrek":
+            if 8 < wind < 20: score += 15 # Az dalgalı sever
+            if wave > 0.4: score += 15
+            if p_diff < 0: score += 10 # Alçalan basınç iştah açar
         return min(95, max(5, score))
 
-    anlik_skor = calculate_score(cw['wind_speed_10m'], m['current']['wave_height'], cw['surface_pressure'], cw['is_day'])
-
-    # --- ÜST PANEL (WIDGETLAR) ---
-    st.markdown("### 📊 Teknik Özet")
+    # --- ÜST PANEL: TEKNİK VERİLER ---
     cols = st.columns(4)
-    data = [
-        ("AKTİVİTE", f"%{anlik_skor}", "Stabil" if 1010 < cw['surface_pressure'] < 1015 else "Değişken"),
-        ("RÜZGAR", f"{cw['wind_speed_10m']} km/s", f"Nem: %{cw['relative_humidity_2m']}"),
-        ("BASINÇ", f"{cw['surface_pressure']} hPa", "İdeal" if 1012 < cw['surface_pressure'] < 1016 else "Riskli"),
-        ("DALGA", f"{m['current']['wave_height']} m", "LRF Uygun")
-    ]
-    
+    data = [("💨 RÜZGAR", f"{cw['wind_speed_10m']} km/h"), ("📉 BASINÇ", f"{cw['surface_pressure']} hPa"), 
+            ("🌊 DALGA", f"{mw['wave_height']} m"), ("🌡️ HAVA", f"{cw['temperature_2m']}°C")]
     for i, col in enumerate(cols):
         with col:
-            st.markdown(f"""<div class="metric-container">
-                <div class="metric-title">{data[i][0]}</div>
-                <div class="metric-value">{data[i][1]}</div>
-                <div class="metric-desc">{data[i][2]}</div>
+            st.markdown(f'<div class="metric-card"><div class="metric-label">{data[i][0]}</div><div class="metric-value">{data[i][1]}</div></div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # --- HEDEF BALIK SKORLARI ---
+    st.subheader("🎯 Hedef Balık Aktivite Tahmini")
+    f_cols = st.columns(4)
+    targets = ["İstavrit", "Eşkina", "Mırmır", "Levrek"]
+    
+    for i, fish in enumerate(targets):
+        f_score = calculate_fish_score(fish, cw['wind_speed_10m'], mw['wave_height'], cw['surface_pressure'], cw['is_day'], press_diff)
+        with f_cols[i]:
+            st.markdown(f"""<div class="target-card">
+                <div class="target-name">{fish}</div>
+                <div class="target-score">%{f_score}</div>
+                <div style="color:#8b949e; font-size:11px;">Aktivite Durumu</div>
             </div>""", unsafe_allow_html=True)
 
-    # --- 24 SAATLİK TAHMİN GRAFİĞİ ---
+    # --- DETAYLI ANALİZ VE TAKTİK ---
     st.markdown("---")
-    st.subheader("⏰ 24 Saatlik Av Tahmini")
+    l_col, r_col = st.columns([1, 1])
     
-    # Saatlik verileri işle
-    forecast_data = []
-    current_hour = datetime.now().hour
-    for i in range(current_hour, current_hour + 24):
-        idx = i % 24
-        h_wind = hourly['wind_speed_10m'][idx]
-        h_press = hourly['surface_pressure'][idx]
-        # Basit bir gece/gündüz tahmini (18-06 arası gece)
-        h_is_day = 1 if 6 < idx < 19 else 0
-        h_score = calculate_score(h_wind, 0.2, h_press, h_is_day)
-        forecast_data.append({"Saat": f"{idx}:00", "Av Şansı": h_score})
-    
-    df_forecast = pd.DataFrame(forecast_data)
-    st.line_chart(df_forecast.set_index("Saat"), height=250)
-
-    # --- HARİTA VE DETAY ---
-    st.markdown("---")
-    l_col, r_col = st.columns([1.5, 1])
     with l_col:
-        st.map(pd.DataFrame({'lat': [lat], 'lon': [lon]}), zoom=14)
+        st.subheader("🕵️ Profesyonel Değerlendirme")
+        if cw['is_day'] == 0:
+            st.success("GECE PERİYODU: Balıklar kıyıya yanaştı. Yüzey ve orta su (0.5m-1.5m) taraması yap.")
+        else:
+            st.warning("GÜNDÜZ PERİYODU: Balık derinde ve taş altlarında. 3m-6m derinlik, dip aksiyonu şart.")
+        
+        st.info(f"💡 **Taktik:** { 'Basınç yükseliyor, balık hareketli. Glow silikon dene.' if press_diff > 0 else 'Basınç düşüyor, balık nazlı. Kokulu worm ve ağır aksiyon kullan.' }")
+
     with r_col:
-        st.info(f"🌔 **Derinlik:** {'Yüzey (Işık/Gece)' if cw['is_day'] == 0 else 'Dip (Baskı/Gündüz)'}")
-        st.write(f"🌅 Gün Doğumu: {w['daily']['sunrise'][0][-5:]}")
-        st.write(f"🌇 Gün Batımı: {w['daily']['sunset'][0][-5:]}")
+        st.write("**📍 Mera Görünümü**")
+        st.map(pd.DataFrame({'lat': [lat], 'lon': [lon]}), zoom=14)
 
 else:
-    st.error("Veri merkeziyle bağlantı kesildi.")
+    st.error("Veri alınamadı, lütfen sayfayı yenileyin.")
