@@ -1,8 +1,7 @@
 import streamlit as st
 import requests
-from datetime import datetime
 
-# 1. Mobil Uyumlu Sayfa Ayarları
+# 1. Sayfa Ayarları (Hata veren parametreler kaldırıldı)
 st.set_page_config(
     page_title="LRF Master", 
     page_icon="🎣", 
@@ -10,18 +9,18 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Telefon ekranı için özel görsel düzenleme
+# 2. Telefon Ekranı İçin Görsel Düzenleme
 st.markdown("""
     <style>
     [data-testid="stMetricValue"] { font-size: 28px; }
     .stButton>button { width: 100%; border-radius: 20px; }
     .main { background-color: #fafafa; }
     </style>
-    """, unsafe_allow_index=True)
+    """, unsafe_allow_html=True)
 
 st.title("🎣 LRF Master: İstanbul")
 
-# 2. Tüm Meralar (Tek Liste)
+# 3. Mera ve Balık Verileri
 MERALAR = {
     "Kadıköy (Moda)": {"lat": 40.9780, "lon": 29.0220, "tip": "Kayalık/Derin"},
     "Üsküdar Sahil": {"lat": 41.0540, "lon": 29.0550, "tip": "Akıntılı/Derin"},
@@ -44,39 +43,40 @@ BALIK_REHBERI = {
     "İskorpit": "Kırmızı/Turuncu kokulu silikon. Yavaş aksiyon."
 }
 
-# Seçim Alanları
+# 4. Seçim Arayüzü
 secilen_mera = st.selectbox("📍 Mera Seçin:", list(MERALAR.keys()))
 hedef_balik = st.selectbox("🐟 Hedef Balık:", list(BALIK_REHBERI.keys()))
 
 @st.cache_data(ttl=900)
 def get_weather(lat, lon):
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,is_day,wind_speed_10m,surface_pressure&daily=sunrise,sunset&timezone=auto"
-    return requests.get(url).json()
+    try:
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,is_day,wind_speed_10m,surface_pressure&daily=sunrise,sunset&timezone=auto"
+        return requests.get(url).json()
+    except:
+        return None
 
-try:
-    m = MERALAR[secilen_mera]
-    w = get_weather(m['lat'], m['lon'])
+# 5. Analiz ve Gösterim
+w = get_weather(MERALAR[secilen_mera]['lat'], MERALAR[secilen_mera]['lon'])
+
+if w:
     c = w['current']
-
-    # LRF Algoritması
     score = 70
     if c['wind_speed_10m'] > 12: score -= 35
     if c['is_day'] == 0: score += 20
     score = min(100, max(0, score))
 
-    # Mobil Gösterim Kartları
     col1, col2 = st.columns(2)
-    with col1:
-        st.metric("AV ŞANSI", f"%{score}")
-    with col2:
-        st.metric("RÜZGAR", f"{c['wind_speed_10m']} km/s")
+    col1.metric("AV ŞANSI", f"%{score}")
+    col2.metric("RÜZGAR", f"{c['wind_speed_10m']} km/s")
 
-    if score > 70: st.success("🎯 Şartlar harika, rastgele!")
-    elif score > 45: st.warning("⚖️ Biraz çaba gerekebilir.")
-    else: st.error("🏠 Hava şu an LRF'yi zorluyor.")
+    if score > 70:
+        st.success("🎯 Şartlar harika, rastgele!")
+    elif score > 45:
+        st.warning("⚖️ Biraz çaba gerekebilir.")
+    else:
+        st.error("🏠 Hava şu an LRF'yi zorluyor.")
 
-    st.markdown(f"**💡 Öneri:** {BALIK_REHBERI[hedef_balik]}")
-    st.info(f"🌅 Gün Doğumu: {w['daily']['sunrise'][0][-5:]} | 🌇 Gün Batımı: {w['daily']['sunset'][0][-5:]}")
-
-except Exception:
-    st.error("Veri alınamadı, interneti kontrol et.")
+    st.info(f"💡 **Taktik:** {BALIK_REHBERI[hedef_balik]}")
+    st.write(f"🌅 Gün Doğumu: {w['daily']['sunrise'][0][-5:]} | 🌇 Gün Batımı: {w['daily']['sunset'][0][-5:]}")
+else:
+    st.error("Hava durumu verisi şu an alınamıyor.")
